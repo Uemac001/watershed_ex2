@@ -1,0 +1,9 @@
+/.venv
+/__pycache__
+/.DS_Store
+/.vscode
+/bucket_model_copy.py
+/testing.ipynb
+images_new_data
+images
+/Users/cooper/Desktop/bucket-model/data/landquart_bucket_model_data.csv
