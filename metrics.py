@@ -99,6 +99,6 @@ def pbias(simulated_Q: pd.DataFrame, observed_Q: pd.Series) -> float:
     Returns:
         float: The PBIAS value.
     """
-    pbias_value = 100 * np.sum(observed_Q - simulated_Q) / np.sum(observed_Q)
+    pbias_value = 100 * np.sum(simulated_Q - observed_Q) / np.sum(observed_Q)
 
     return pbias_value
