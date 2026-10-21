@@ -1,0 +1,9 @@
+# Windows / Python 3.13 用（元の requirements.txt は macOS conda 環境の出力のため使用不可）
+# pandas は 3.x だと resample("M") 等が動かないため 2.x に固定
+numpy
+pandas>=2.2,<3
+scipy
+matplotlib
+seaborn
+ipykernel
+ipywidgets
