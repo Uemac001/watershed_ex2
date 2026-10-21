@@ -3,6 +3,7 @@
 from typing import Optional
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 MONTH_LABELS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
@@ -86,3 +87,118 @@ def plot_monthly_variable_boxplots(
     fig.tight_layout()
     plt.show()
     return monthly
+
+
+def budyko_curve(aridity_index):
+    """Budyko (1974) curve: AET/P as a function of the aridity index PET/P."""
+    phi = np.asarray(aridity_index, dtype=float)
+    return np.sqrt(phi * np.tanh(1 / phi) * (1 - np.exp(-phi)))
+
+
+def compare_aet_pet(
+    results: pd.DataFrame,
+    observed: Optional[pd.DataFrame] = None,
+    snow_threshold: float = 1.0,
+    title: str = "",
+    figsize: tuple[int, int] = (15, 4.5),
+) -> dict:
+    """Compare actual ET (AET) with potential ET (PET, Hamon) of a model run.
+
+    Panels: (a) mean monthly PET and AET, with AET split into days with and
+    without snow cover, and AET/PET on a second axis; (b) annual PET, AET and,
+    if observed runoff is given, the water-balance ET (P - Q_obs);
+    (c) Budyko plot with the annual and mean model points (and P - Q_obs).
+
+    Args:
+        results (pd.DataFrame): Model output with columns 'PET', 'ET', 'Precip', 'Q_s', 'Q_gw', 'Snow_accum'.
+        observed (pd.DataFrame): Optional, data with an observed 'Q' column [mm/d].
+        snow_threshold (float): SWE [mm] above which a day counts as snow-covered.
+        title (str): Figure title, if empty, no title will be shown.
+        figsize (tuple): The size of the figure.
+
+    Returns:
+        dict: 'annual' (yearly totals and ratios, with a 'mean' row) and
+        'monthly' (mean monthly totals and AET/PET) DataFrames.
+    """
+    df = pd.DataFrame(index=results.index)
+    df["P"] = results["Precip"]
+    df["PET"] = results["PET"]
+    df["AET"] = results["ET"]
+    df["AET_snow"] = results["ET"].where(results["Snow_accum"] > snow_threshold, 0.0)
+    df["Q_sim"] = results["Q_s"] + results["Q_gw"]
+    if observed is not None:
+        df["Q_obs"] = observed["Q"]
+
+    # Annual totals and ratios
+    annual = df.resample("YS").sum(min_count=1)
+    annual.index = annual.index.year
+    annual.index.name = "Year"
+    annual.loc["mean"] = annual.mean()
+    annual["AET/PET"] = annual["AET"] / annual["PET"]
+    annual["PET/P"] = annual["PET"] / annual["P"]
+    annual["AET/P"] = annual["AET"] / annual["P"]
+    if observed is not None:
+        annual["ET_wb"] = annual["P"] - annual["Q_obs"]  # water-balance ET (storage change neglected)
+        annual["ET_wb/P"] = annual["ET_wb"] / annual["P"]
+
+    # Mean monthly totals
+    n_years = df.index.year.nunique()
+    monthly = df.groupby(df.index.month).sum() / n_years
+    monthly.index.name = "Month"
+    monthly["AET/PET"] = monthly["AET"] / monthly["PET"]
+
+    fig, (ax_m, ax_y, ax_b) = plt.subplots(1, 3, figsize=figsize)
+
+    # (a) monthly PET vs AET
+    months = np.arange(1, 13)
+    ax_m.bar(months, monthly["AET"] - monthly["AET_snow"], color="tab:green", alpha=0.7, label="AET, snow-free")
+    ax_m.bar(months, monthly["AET_snow"], bottom=monthly["AET"] - monthly["AET_snow"],
+             color="tab:cyan", alpha=0.7, label=f"AET, SWE > {snow_threshold:g} mm")
+    ax_m.plot(months, monthly["PET"], "k-o", markersize=4, label="PET (Hamon)")
+    ax_m.set_xticks(months, MONTH_LABELS)
+    ax_m.set_ylabel("Mean monthly total [mm/month]")
+    ax_m.set_title("(a) Mean monthly PET and AET")
+    ax_r = ax_m.twinx()
+    ax_r.plot(months, monthly["AET/PET"], "r--", label="AET/PET")
+    ax_r.set_ylim(0, 1.05)
+    ax_r.set_ylabel("AET/PET [-]", color="r")
+    handles = ax_m.get_legend_handles_labels()[0] + ax_r.get_legend_handles_labels()[0]
+    ax_m.legend(handles, [h.get_label() for h in handles], loc="upper left", fontsize=8)
+
+    # (b) annual PET, AET and water-balance ET
+    years = annual.index[:-1]
+    ax_y.plot(years, annual.loc[years, "PET"], "k-o", markersize=4, label="PET (Hamon)")
+    ax_y.plot(years, annual.loc[years, "AET"], "g-o", markersize=4, label="AET (model)")
+    if observed is not None:
+        ax_y.plot(years, annual.loc[years, "ET_wb"], "b-s", markersize=4, label="P - Q$_{obs}$ (water balance)")
+    ax_y.set_ylabel("Annual total [mm/yr]")
+    ax_y.set_title("(b) Annual ET")
+    ax_y.legend(fontsize=8)
+
+    # (c) Budyko plot
+    phi = np.linspace(0.05, 2, 200)
+    ax_b.plot(phi, budyko_curve(phi), "k-", label="Budyko curve")
+    ax_b.plot([0, 1], [0, 1], "k:", lw=1, label="Energy limit")
+    ax_b.plot([1, 2], [1, 1], "k:", lw=1)
+    ax_b.scatter(annual.loc[years, "PET/P"], annual.loc[years, "AET/P"], s=15, color="tab:green", alpha=0.5)
+    ax_b.scatter(annual.loc["mean", "PET/P"], annual.loc["mean", "AET/P"], s=60, color="tab:green",
+                 edgecolor="k", label="Model AET (annual / mean)")
+    if observed is not None:
+        ax_b.scatter(annual.loc[years, "PET/P"], annual.loc[years, "ET_wb/P"], s=15, color="tab:blue", alpha=0.5)
+        ax_b.scatter(annual.loc["mean", "PET/P"], annual.loc["mean", "ET_wb/P"], s=60, color="tab:blue",
+                     edgecolor="k", label="P - Q$_{obs}$ (annual / mean)")
+    ax_b.set_xlim(0, max(0.5, annual["PET/P"].max() * 1.5))
+    ax_b.set_ylim(0, max(0.5, annual[["AET/P"] + (["ET_wb/P"] if observed is not None else [])].max().max() * 1.5))
+    ax_b.set_xlabel("Aridity index PET/P [-]")
+    ax_b.set_ylabel("Evaporative index ET/P [-]")
+    ax_b.set_title("(c) Budyko space")
+    ax_b.legend(fontsize=8, loc="lower right")
+
+    for ax in (ax_m, ax_y, ax_b):
+        ax.grid(alpha=0.3)
+    if title:
+        fig.suptitle(title)
+    fig.tight_layout()
+    plt.show()
+
+    return {"annual": annual, "monthly": monthly}

@@ -364,6 +364,7 @@ class BucketModel:
         -------
         Dict[str, float]
             Model outputs for the time step including:
+            - PET: Potential evapotranspiration (Hamon) [mm/day]
             - ET: Actual evapotranspiration [mm/day]
             - Q_s: Surface runoff [mm/day]
             - Q_gw: Groundwater runoff [mm/day]
@@ -393,6 +394,7 @@ class BucketModel:
         
         # Return results for this time step
         return {
+            "PET": self.pet,
             "ET": self.et,
             "Q_s": self.surface_runoff,
             "Q_gw": self.groundwater_runoff,
