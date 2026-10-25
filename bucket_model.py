@@ -512,7 +512,8 @@ class BucketModel:
         Parameters
         ----------
         new_params : Dict[str, float]
-            Dictionary of parameters to update
+            Dictionary of parameters to update (may include k_ice, the degree-day
+            factor for ice on glacier HRUs; it is not calibrated by the optimizer)
         verbose : bool, optional
             If True, print updated parameters
             
@@ -532,6 +533,8 @@ class BucketModel:
             self.rg = new_params["rg"]
         if "snow_threshold_temp" in new_params:
             self.snow_threshold_temp = new_params["snow_threshold_temp"]
+        if "k_ice" in new_params:
+            self.k_ice = new_params["k_ice"]  # used on glacier HRUs only (is_glacier = True)
         
         # Validate updated parameters
         self._validate_params()
@@ -544,6 +547,7 @@ class BucketModel:
             print(f"  fr: {self.fr}")
             print(f"  rg: {self.rg} days")
             print(f"  snow_threshold_temp: {self.snow_threshold_temp} °C")
+            print(f"  k_ice: {self.k_ice} mm/°C/day (glacier HRUs only)")
 
     def copy(self) -> 'BucketModel':
         """
