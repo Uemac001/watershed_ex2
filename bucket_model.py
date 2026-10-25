@@ -238,8 +238,10 @@ class BucketModel:
             self.rain = 0.0
         else:
             # Mixed precipitation based on temperature range
-            # Assumes linear distribution of temperature between min and max
-            rain_fraction = self.temp_max / (self.temp_max - self.temp_min)
+            # Assumes linear distribution of temperature between min and max;
+            # rain is the part of the day above the snow threshold temperature
+            rain_fraction = (self.temp_max - self.snow_threshold_temp) / (self.temp_max - self.temp_min)
+            rain_fraction = min(max(rain_fraction, 0.0), 1.0)
             self.rain = self.precip * rain_fraction
             self.snow = self.precip - self.rain
 
