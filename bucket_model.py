@@ -30,6 +30,10 @@ class BucketModel:
         self.rg: float = params.get("rg", 10)  # Groundwater residence time [days]
         self.snow_threshold_temp: float = params.get("snow_threshold_temp", 0.0)  # Snow threshold [°C]
         self.snowmelt_temp_threshold: float = 0.0  # Snowmelt temperature threshold [°C]
+
+        # Glacier ice melt (only for glacier HRUs; is_glacier = False gives the original model)
+        self.is_glacier: bool = False  # True if the HRU is glacier-covered
+        self.k_ice: float = 0.0  # Degree-day factor for ice [mm/°C/day]
         
         # Validate parameters
         self._validate_params()
@@ -38,6 +42,7 @@ class BucketModel:
         self.soil_moisture: float = 10.0  # Soil water content [mm]
         self.groundwater: float = 100.0  # Groundwater storage [mm]
         self.snow_cover: float = 0.0  # Snow accumulation [mm]
+        self.ice_storage: float = 0.0  # Ice storage relative to the start [mm w.e.] (negative = mass loss)
         
         # Temperature variables
         self.basin_temp: float = 0.0  # Basin temperature [°C]
@@ -49,6 +54,7 @@ class BucketModel:
         self.rain: float = 0.0  # Rainfall [mm]
         self.snow: float = 0.0  # Snowfall [mm]
         self.snowmelt: float = 0.0  # Snowmelt [mm/day]
+        self.ice_melt: float = 0.0  # Glacier ice melt [mm/day]
         self.pet: float = 0.0  # Potential evapotranspiration [mm/day]
         self.et: float = 0.0  # Actual evapotranspiration [mm/day]
         self.surface_runoff: float = 0.0  # Surface runoff [mm/day]
@@ -68,6 +74,7 @@ class BucketModel:
         self._initial_soil_moisture: float = self.soil_moisture
         self._initial_groundwater: float = self.groundwater
         self._initial_snow_cover: float = self.snow_cover
+        self._initial_ice_storage: float = self.ice_storage
 
     def _validate_params(self) -> None:
         """
@@ -90,6 +97,9 @@ class BucketModel:
         if self.rg < 1:
             raise ValueError(f"rg must be greater than 1, got {self.rg}")
 
+        if self.k_ice < 0:
+            raise ValueError(f"k_ice must be non-negative, got {self.k_ice}")
+
     def reset_state(self) -> None:
         """
         Reset model state variables to their initial values.
@@ -99,12 +109,14 @@ class BucketModel:
         self.soil_moisture = self._initial_soil_moisture
         self.groundwater = self._initial_groundwater
         self.snow_cover = self._initial_snow_cover
+        self.ice_storage = self._initial_ice_storage
         
         # Reset flux variables
         self.precip = 0.0
         self.rain = 0.0
         self.snow = 0.0
         self.snowmelt = 0.0
+        self.ice_melt = 0.0
         self.pet = 0.0
         self.et = 0.0
         self.surface_runoff = 0.0
@@ -247,6 +259,38 @@ class BucketModel:
             potential_melt = self.k * (self.basin_temp - self.snowmelt_temp_threshold)
             self.snowmelt = min(potential_melt, self.snow_cover)
 
+    def compute_ice_melt(self) -> None:
+        """
+        Compute glacier ice melt using the degree-day method (glacier HRUs only).
+
+        Ice melts only after the snow cover is used up: the part of the day left
+        once all snow has melted melts ice at rate k_ice. There is no ice melt on
+        days with snowfall, because fresh snow covers the ice.
+        """
+        self.ice_melt = 0.0
+        if not self.is_glacier or self.snow > 0:
+            return
+        if self.basin_temp <= self.snowmelt_temp_threshold:
+            return
+
+        degree_days = self.basin_temp - self.snowmelt_temp_threshold
+        potential_snowmelt = self.k * degree_days
+        if potential_snowmelt > self.snow_cover:
+            snow_free_fraction = 1 - self.snow_cover / potential_snowmelt
+            self.ice_melt = snow_free_fraction * self.k_ice * degree_days
+            self.ice_storage -= self.ice_melt
+
+    def convert_snow_to_ice(self) -> None:
+        """
+        Turn the snow left at the end of the melt season into ice (glacier HRUs only).
+
+        Called on 1 October: snow that survived the summer becomes part of the
+        glacier, so snow does not pile up over the years.
+        """
+        if self.is_glacier and self.date.month == 10 and self.date.day == 1:
+            self.ice_storage += self.snow_cover
+            self.snow_cover = 0.0
+
     def update_snow_cover(self) -> None:
         """
         Update snow cover based on snowfall and snowmelt.
@@ -306,7 +350,7 @@ class BucketModel:
         computing surface runoff and percolation based on soil moisture content.
         """
         # Calculate water input to soil
-        water_input = self.rain + self.snowmelt
+        water_input = self.rain + self.snowmelt + self.ice_melt
         
         # Calculate potential soil water content
         potential_soil_water = self.soil_moisture + water_input - self.et
@@ -370,6 +414,8 @@ class BucketModel:
             - Q_gw: Groundwater runoff [mm/day]
             - Total_Runoff: Total runoff (Q_s + Q_gw) [mm/day]
             - Snow_accum: Snow accumulation [mm]
+            - Ice_melt: Glacier ice melt [mm/day] (glacier HRUs only)
+            - S_ice: Ice storage relative to the start [mm w.e.] (glacier HRUs only)
             - S: Soil water content [mm]
             - S_gw: Groundwater storage [mm]
             - Snow_melt: Snowmelt [mm/day]
@@ -384,9 +430,11 @@ class BucketModel:
         self.temp_min = tmin
         
         # Run all hydrological processes
+        self.convert_snow_to_ice()
         self.adjust_temperature()
         self.partition_precipitation()
         self.compute_snow_melt()
+        self.compute_ice_melt()
         self.update_snow_cover()
         self.compute_evapotranspiration()
         self.update_soil_moisture()
@@ -403,6 +451,8 @@ class BucketModel:
             "S": self.soil_moisture,
             "S_gw": self.groundwater,
             "Snow_melt": self.snowmelt,
+            "Ice_melt": self.ice_melt,
+            "S_ice": self.ice_storage,
             "Rain": self.rain,
             "Snow": self.snow,
             "Precip": self.precip,
