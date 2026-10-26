@@ -278,7 +278,7 @@ class BucketModel:
         degree_days = self.basin_temp - self.snowmelt_temp_threshold
         potential_snowmelt = self.k * degree_days
         if potential_snowmelt > self.snow_cover:
-            snow_free_fraction = 1 - self.snow_cover / potential_snowmelt
+            snow_free_fraction = 1 - self.snow_cover / potential_snowmelt #calcurate the fraction of the day that is snow-free
             self.ice_melt = snow_free_fraction * self.k_ice * degree_days
             self.ice_storage -= self.ice_melt
 

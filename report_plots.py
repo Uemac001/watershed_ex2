@@ -202,3 +202,70 @@ def compare_aet_pet(
     plt.show()
 
     return {"annual": annual, "monthly": monthly}
+
+
+def plot_hru_snow_accumulation(
+    hru_results: dict,
+    hru_table: Optional[pd.DataFrame] = None,
+    title: str = "",
+    figsize: tuple[int, int] = (14, 4.5),
+) -> pd.DataFrame:
+    """Snow accumulation of each HRU, to show where snow piles up over the years.
+
+    Panels: (a) daily snow storage (SWE) of each HRU; (b) snow left at the end
+    of each melt season (30 September). Snow that survives every summer and keeps
+    growing is a "snow tower": the HRU never melts out.
+
+    Args:
+        hru_results (dict): HRU id -> model output with a 'Snow_accum' column
+            (the second output of run_hru_model).
+        hru_table (pd.DataFrame): Optional, table with columns 'HRU', 'name' and
+            'mean_elevation', used for the legend.
+        title (str): Figure title, if empty, no title will be shown.
+        figsize (tuple): The size of the figure.
+
+    Returns:
+        pd.DataFrame: Snow left on 30 September [mm] (one row per year, one column per HRU).
+    """
+    labels = {}
+    for hru_id in hru_results:
+        if hru_table is not None:
+            row = hru_table.loc[hru_table["HRU"] == hru_id].iloc[0]
+            labels[hru_id] = f"HRU {hru_id} {row['name']} ({row['mean_elevation']:.0f} m)"
+        else:
+            labels[hru_id] = f"HRU {hru_id}"
+
+    # Snow left at the end of the melt season
+    end_of_season = pd.DataFrame(
+        {
+            labels[hru_id]: results["Snow_accum"][
+                (results.index.month == 9) & (results.index.day == 30)
+            ].set_axis(results.index[(results.index.month == 9) & (results.index.day == 30)].year)
+            for hru_id, results in hru_results.items()
+        }
+    )
+    end_of_season.index.name = "Year"
+
+    fig, (ax_ts, ax_end) = plt.subplots(1, 2, figsize=figsize, gridspec_kw={"width_ratios": [2, 1]})
+
+    # (a) daily snow storage
+    for hru_id, results in hru_results.items():
+        ax_ts.plot(results.index, results["Snow_accum"], lw=0.8, label=labels[hru_id])
+    ax_ts.set_ylabel("Snow accumulation (SWE) [mm]")
+    ax_ts.set_title("(a) Daily snow storage per HRU")
+    ax_ts.legend(fontsize=8, loc="upper left")
+
+    # (b) snow surviving the summer
+    for column in end_of_season.columns:
+        ax_end.plot(end_of_season.index, end_of_season[column], "o-", markersize=3, label=column)
+    ax_end.set_ylabel("Snow left on 30 September [mm]")
+    ax_end.set_title("(b) Snow surviving the melt season")
+
+    for ax in (ax_ts, ax_end):
+        ax.grid(alpha=0.3)
+    if title:
+        fig.suptitle(title)
+    fig.tight_layout()
+    plt.show()
+
+    return end_of_season
