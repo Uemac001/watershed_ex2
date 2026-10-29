@@ -898,3 +898,107 @@ class BucketModelOptimizer:
             "Average_Sensitivity", ascending=False)
 
         return sensitivity_df
+
+    def seasonal_sensitivity_analysis(
+        self,
+        percent_change: float = 5.0,
+        parameters: Optional[List[str]] = None,
+        data: Optional[pd.DataFrame] = None
+    ) -> pd.DataFrame:
+        """
+        Relative local sensitivity of the seasonal runoff to each parameter.
+
+        The model is run continuously over the whole period (so snow and soil
+        storage carry over between seasons) and the simulated total runoff is
+        averaged per season (DJF, MAM, JJA, SON) afterwards.
+
+        Parameters
+        ----------
+        percent_change : float, default=5.0
+            Percentage change applied to each parameter (+ and -)
+        parameters : List[str], optional
+            Parameters to analyze. If None, all calibrated parameters (plus k_ice
+            if the model is a glacier HRU with k_ice > 0) are analyzed.
+        data : pd.DataFrame, optional
+            Input data to run the model on. If None, the training data is used.
+
+        Returns
+        -------
+        pd.DataFrame
+            Long table with one row per parameter and season:
+            - Parameter, Season
+            - Q_base: seasonal mean runoff with the optimal parameters [mm/d]
+            - Sr_Pos, Sr_Neg: sensitivity with the + and - change
+            - Sr: signed relative sensitivity (central difference)
+            - Rank: rank of |Sr| within the season (1 = most sensitive)
+
+        Notes
+        -----
+        Sr = (dQ/Q) / (dP/P), with dQ = Q(P+dP) - Q(P-dP) and dP = 2 * percent_change.
+        """
+        if self.best_parameters is None:
+            raise ValueError(
+                "No calibration results available. Run calibrate() first.")
+
+        if data is None:
+            data = self.training_data
+
+        base_params = self.best_parameters.copy()
+        # k_ice is not calibrated, but it is a model parameter when ice melt is on
+        if self._model_copy.is_glacier and self._model_copy.k_ice > 0:
+            base_params["k_ice"] = self._model_copy.k_ice
+
+        if parameters is None:
+            parameters = list(base_params.keys())
+
+        seasons = ["DJF", "MAM", "JJA", "SON"]
+        season_of_month = {12: "DJF", 1: "DJF", 2: "DJF", 3: "MAM", 4: "MAM", 5: "MAM",
+                           6: "JJA", 7: "JJA", 8: "JJA", 9: "SON", 10: "SON", 11: "SON"}
+
+        # Function to compute the mean runoff of each season
+        def compute_seasonal_runoff(model_params):
+            model_copy = self._model_copy.copy()
+            model_copy.update_parameters(model_params)
+            results = model_copy.run(data)
+            total_runoff = results["Q_s"] + results["Q_gw"]
+            season = total_runoff.index.month.map(season_of_month)
+            return total_runoff.groupby(season).mean().reindex(seasons)
+
+        base_runoff = compute_seasonal_runoff(base_params)
+        rel_change = percent_change / 100
+
+        sensitivity_results = []
+
+        for param in parameters:
+            param_value = base_params[param]
+
+            pos_params = base_params.copy()
+            pos_params[param] = param_value * (1 + rel_change)
+            pos_runoff = compute_seasonal_runoff(pos_params)
+
+            neg_params = base_params.copy()
+            neg_params[param] = param_value * (1 - rel_change)
+            neg_runoff = compute_seasonal_runoff(neg_params)
+
+            sens_pos = (pos_runoff - base_runoff) / base_runoff / rel_change
+            sens_neg = (base_runoff - neg_runoff) / base_runoff / rel_change
+            sens = (pos_runoff - neg_runoff) / base_runoff / (2 * rel_change)
+
+            for season in seasons:
+                sensitivity_results.append({
+                    "Parameter": param,
+                    "Season": season,
+                    "Q_base": round(base_runoff[season], 4),
+                    "Sr_Pos": round(sens_pos[season], 4),
+                    "Sr_Neg": round(sens_neg[season], 4),
+                    "Sr": round(sens[season], 4),
+                })
+
+        sensitivity_df = pd.DataFrame(sensitivity_results)
+        sensitivity_df["Rank"] = (
+            sensitivity_df.groupby("Season")["Sr"]
+            .transform(lambda s: s.abs().rank(ascending=False, method="min"))
+            .astype(int)
+        )
+
+        return sensitivity_df

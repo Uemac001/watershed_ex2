@@ -743,3 +743,50 @@ def plot_parameter_kde(
 
     if output_destination:
         fig.savefig(output_destination, dpi=300, bbox_inches="tight")
+
+
+def plot_seasonal_sensitivity(
+    sensitivity: pd.DataFrame,
+    parameters: list = None,
+    sharey: bool = True,
+    output_destination: str = "",
+    figsize: tuple[int, int] = (10, 7),
+) -> None:
+    """
+    Plot the relative sensitivity of the seasonal runoff as one bar chart per season.
+
+    Args:
+        sensitivity (pd.DataFrame): Output of BucketModelOptimizer.seasonal_sensitivity_analysis().
+        parameters (list): Parameters to show, in this order. Defaults to all in the table.
+        sharey (bool): Use the same y-axis in all panels so the seasons can be compared.
+        output_destination (str): The file path to save the plot.
+        figsize (tuple[int, int]): The size of the figure.
+    """
+    if parameters is None:
+        parameters = list(dict.fromkeys(sensitivity["Parameter"]))
+
+    titles = {
+        "DJF": "Winter Q (DJF)",
+        "MAM": "Spring Q (MAM)",
+        "JJA": "Summer Q (JJA)",
+        "SON": "Fall Q (SON)",
+    }
+    # One fixed color per parameter, the same in every panel
+    colors = dict(zip(parameters, plt.get_cmap("tab10").colors))
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharey=sharey)
+    for ax, (season, title) in zip(axes.flat, titles.items()):
+        season_sens = sensitivity[sensitivity["Season"] == season].set_index("Parameter")
+        values = season_sens.loc[parameters, "Sr"]
+        labels = [p.replace("snow_threshold_temp", "T_thr") for p in values.index]
+        ax.bar(labels, values.values, color=[colors[p] for p in values.index])
+        ax.axhline(0, color="black", linewidth=0.8)
+        ax.set_title(title)
+        ax.set_ylabel("$S_r$ [-]")
+        ax.tick_params(axis="x", rotation=30)
+        ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+
+    if output_destination:
+        fig.savefig(output_destination, dpi=300, bbox_inches="tight")
